@@ -17,7 +17,8 @@ from tqdm import tqdm
 # Argument parser
 parser = argparse.ArgumentParser(description='grm')
 parser.add_argument('--ema', action='store_true', help='whether to use ema')
-parser.add_argument('--detach', action='store_true', help='whether to detach output of generator')
+parser.add_argument('--detach', action='store_true', help='whether to detach output of generative model')
+parser.add_argument('--lambd', default=0.1, type=float, help='loss weight of representation loss')
 parser.add_argument('--data', default='local_datasets/miniimagenet', type=Path, metavar='DIR', help='path to dataset')
 parser.add_argument('--workers', default=4, type=int, metavar='N', help='number of data loader workers')
 parser.add_argument('--epochs', default=400, type=int, metavar='N', help='number of total epochs to run')
@@ -76,8 +77,8 @@ def main():
     print("--- Model Summary ---")
     cm_model_params = sum(p.numel() for p in cm_model.parameters()) / 1_000_000  # Convert to millions
     encoder_model_params = sum(p.numel() for p in encoder_model.parameters()) / 1_000_000  # Convert to millions
-    print(f"CM Model Parameters: {cm_model_params:.2f} million")
-    print(f"Encoder Model Parameters: {encoder_model_params:.2f} million")
+    print(f"CM Model Parameters: {cm_model_params:.2f} M")
+    print(f"Encoder Model Parameters: {encoder_model_params:.2f} M")
     print("-----------------------\n")
 
     # Training configurations
@@ -123,7 +124,7 @@ def main():
 
     fid = FrechetInceptionDistance(reset_real_features=False, normalize=True).to(device)
 
-    for i, batch in enumerate(fid_loader):
+    for _, batch in enumerate(fid_loader):
         fid.update(batch[0].to(device), real=True)
 
     current_training_step = 0
@@ -148,14 +149,14 @@ def main():
 
             # Loss Computation
             recon_loss = (pseudo_huber_loss(x1, x2) * recon_output.loss_weights).mean()
-
+            
             if args.detach:
                 aug_1, aug_2 = x1.detach(), x2.detach()
+                
             aug_1, aug_2 = x1, x2
-
             rep_loss = encoder_model(aug_1, aug_2)
     
-            loss = recon_loss + rep_loss
+            loss = recon_loss + args.lambd * rep_loss
             # Backward Pass & Weights Update
             loss.backward()
             optimizer_backbone.step()
@@ -195,7 +196,7 @@ def main():
             writer.add_image('Sample/few_step_ema', (samples_few_step / 2 + 0.5).cpu().detach(), epoch + 1)
 
         if (epoch + 1) % 10 == 0:
-            for i in range(int(50000 / batch_size)):
+            for _ in range(int(50000 / batch_size)):
                 with torch.no_grad():
                     samples = consistency_sampling_and_editing(
                         cm_model_ema,
