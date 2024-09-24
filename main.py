@@ -17,6 +17,7 @@ from tqdm import tqdm
 # Argument parser
 parser = argparse.ArgumentParser(description='grm')
 parser.add_argument('--ema', action='store_true', help='whether to use ema')
+parser.add_argument('--detach', action='store_true', help='whether to detach output of generator')
 parser.add_argument('--data', default='local_datasets/miniimagenet', type=Path, metavar='DIR', help='path to dataset')
 parser.add_argument('--workers', default=4, type=int, metavar='N', help='number of data loader workers')
 parser.add_argument('--epochs', default=400, type=int, metavar='N', help='number of total epochs to run')
@@ -122,11 +123,11 @@ def main():
 
     fid = FrechetInceptionDistance(reset_real_features=False, normalize=True).to(device)
 
-    # for i, batch in enumerate(fid_loader):
-    #     fid.update(batch[0].to(device), real=True)
+    for i, batch in enumerate(fid_loader):
+        fid.update(batch[0].to(device), real=True)
 
     current_training_step = 0
-    total_steps = len(train_loader)
+    total_training_steps = len(train_loader)
     total_training_steps = num_epochs * len(train_loader)
     
     for epoch in range(start_epoch, num_epochs):
@@ -141,12 +142,17 @@ def main():
 
             if use_ema:
                 ema_recon = improved_consistency_training(cm_model_ema, images, current_training_step, total_training_steps)
-                aug_1, aug_2 = ema_recon.predicted, ema_recon.target
+                x1, x2 = ema_recon.predicted, ema_recon.target
             else:
-                aug_1, aug_2 = recon_output.predicted, recon_output.target
+                x1, x2 = recon_output.predicted, recon_output.target
 
             # Loss Computation
-            recon_loss = (pseudo_huber_loss(aug_1, aug_2) * recon_output.loss_weights).mean()
+            recon_loss = (pseudo_huber_loss(x1, x2) * recon_output.loss_weights).mean()
+
+            if args.detach:
+                aug_1, aug_2 = x1.detach(), x2.detach()
+            aug_1, aug_2 = x1, x2
+
             rep_loss = encoder_model(aug_1, aug_2)
     
             loss = recon_loss + rep_loss
