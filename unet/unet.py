@@ -392,8 +392,8 @@ class BeatGANsEncoderConfig:
     num_head_channels: int = -1
     resblock_updown: bool = False
     use_new_attention_order: bool = False
-    pool: str = 'adaptivenonzero'
     num_class : int = 1000
+    is_stochastic: bool = False
 
     def make_model(self):
         return BeatGANsEncoderModel(self)
@@ -410,9 +410,14 @@ class BeatGANsEncoderModel(nn.Module):
         self.conf = conf
         self.dtype = th.float32
 
-        self.head = nn.Sequential(
-            nn.Linear(self.conf.out_channels, self.conf.num_class)
-        )
+        if self.conf.is_stochastic:
+            ch = conf.model_channels * conf.channel_mult[-1]
+            self.mu = nn.Sequential(linear(ch, ch),
+                                    nn.SiLU(),
+                                    linear(ch, ch))
+            self.logvar = nn.Sequential(linear(ch, ch),
+                                    nn.SiLU(),
+                                    linear(ch, ch))
 
         if conf.use_time_condition:
             time_embed_dim = conf.model_channels * 4
@@ -511,16 +516,14 @@ class BeatGANsEncoderModel(nn.Module):
             ).make_model(),
         )
         self._feature_size += ch
-        if conf.pool == "adaptivenonzero":
-            self.out = nn.Sequential(
-                normalization(ch),
-                nn.SiLU(),
-                nn.AdaptiveAvgPool2d((1, 1)),
-                conv_nd(conf.dims, ch, conf.out_channels, 1),
-                nn.Flatten(),
-            )
-        else:
-            raise NotImplementedError(f"Unexpected {conf.pool} pooling")
+
+        self.out = nn.Sequential(
+            normalization(ch),
+            nn.SiLU(),
+            nn.AdaptiveAvgPool2d((1, 1)),
+            conv_nd(conf.dims, ch, conf.out_channels, 1),
+            nn.Flatten(),
+        )
         
 
 
@@ -555,6 +558,12 @@ class BeatGANsEncoderModel(nn.Module):
 
         if return_2d_feature:
             return h, h_2d
+        
+        if self.conf.is_stochastic:
+            mu = self.fc_mu(h)
+            logvar = self.fc_logvar(h)
+            return mu, logvar
+        
         else:
             return h
 
@@ -565,13 +574,6 @@ class BeatGANsEncoderModel(nn.Module):
         h = self.out(x)
         return h
     
-    def forward_head(self, x):
-        """
-        forward head for classification
-        """
-        h = self.forward(x)
-        h = self.head(h)
-        return h
     
     def save_pretrained(self, pretrained_path):
         os.makedirs(pretrained_path, exist_ok=True)

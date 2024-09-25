@@ -43,8 +43,17 @@ def main():
     
     # Create model
     cm_model = unet_config.make_model().to(device)
-    encoder_model = GenerativeRepresentation(encoder_config.make_model(), 768, 3072).to(device)
     cm_model.train()
+    
+    encoder_model = GenerativeRepresentation(
+        encoder = encoder_config.make_model(),
+        rep_dim = 768,
+        emb_dim = 3072,
+        batchsize = args.batch_size,
+        num_classes = 64,
+        lambd = 0.0051,
+        is_stochastic = False
+    ).to(device)
 
     use_ema = args.ema
 
@@ -132,7 +141,7 @@ def main():
     total_training_steps = num_epochs * len(train_loader)
     
     for epoch in range(start_epoch, num_epochs):
-        for i, (images, _) in enumerate(tqdm(train_loader, desc=f'Epoch {epoch + 1}/{num_epochs}')):
+        for _, (images, _) in enumerate(tqdm(train_loader, desc=f'Epoch {epoch + 1}/{num_epochs}')):
 
             images = images.to(device)
             optimizer_backbone.zero_grad()
